@@ -7,21 +7,23 @@
 <!--
   社内システムの画面が、利用者本人の Google カレンダーを読むための小さなページです。
 
-  ・ボタンを押した本人の通行証だけを扱います
+  ・ボタンを押した本人の許可だけを扱います
   ・求める権限は カレンダーの閲覧（calendar.readonly）のみです
   ・カレンダーにもどこにも、書き込みは行いません
-  ・受け取った通行証は、呼び出し元の画面にだけ渡します
-  ・このページは何も保存しません
+  ・このページ自体は、許可の控えを保存しません
+    （当社のサーバが預かり、社内システムからの求めにだけ応じます）
 
-  ★ 呼び出し元が本物かどうかは、こちらのサーバが出した
+  ★ 許可は一度だけです。以後は押さずに使えます。
+  ★ 呼び出し元が本物かどうかは、当社のサーバが出した
     「1回きりの合言葉」で確かめます。合言葉が無ければボタンは押せません。
+
+  取り消したいときは Google アカウントの
+  「セキュリティ → サードパーティ製アプリとサービス」から外せます。
 
   お問い合わせ： 株式会社ウィズダムワークス
 -->
 <style>
-  :root{
-    --ji:#1f2328; --usu:#57606a; --waku:#d0d7de; --ao:#0969da;
-  }
+  :root{ --ji:#1f2328; --usu:#57606a; --waku:#d0d7de; --ao:#0969da; }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
       --ji:#e6edf3; --usu:#9198a1; --waku:#3d444d; --ao:#4493f8;
@@ -39,7 +41,7 @@
 </head>
 <body>
 <div class="naka">
-  <button id="btn" disabled>カレンダーを表示</button>
+  <button id="btn" disabled>カレンダーを表示（初回のみ）</button>
   <span class="ji" id="ji"></span>
 </div>
 
@@ -49,96 +51,100 @@
 var CID = '797669684444-5ffbdm9ltqblqj0dt1a4d1r5n0fv3bfm.apps.googleusercontent.com';
 /* 閲覧のみ。書き込みの権限は求めない */
 var SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
-/* 合言葉が本物かを聞く先 */
-var SHIRABE = 'https://gkioqeaowmhwblumpxob.supabase.co/functions/v1/cal-aikotoba';
+/* 当社のサーバ */
+var SABA = 'https://gkioqeaowmhwblumpxob.supabase.co/functions/v1/cal-token';
 
-/* ★ 呼び出し元の見分けは、合言葉で行う。
-
-   住所（オリジン）だけでは見分けられない。
-   社内システムの画面は *.googleusercontent.com の下にあり、
-   その住所は毎回変わるうえ、同じドメインを世界中の Apps Script が使う。
-
-   ここは形だけの下調べで、**本体は合言葉のほう**である。 */
+/* 呼び出し元の形だけの下調べ。**本体は合言葉のほう。** */
 function katachiOk(o){
   return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o)
       || /^http:\/\/localhost(:\d+)?$/.test(o);
 }
 
-var oya = null, tc = null, shirabechu = false;
+var oya = null, cc = null, aikotoba = '', shirabechu = false;
 var btn = document.getElementById('btn');
 var ji  = document.getElementById('ji');
 
 function okuru(m){ if (oya) { try { parent.postMessage(m, oya); } catch (x) {} } }
 function kaku(s){ ji.textContent = s || ''; }
 
-/* 挨拶。合言葉が本物のときだけ、呼び出し元として覚える */
+/* 挨拶。合言葉を預かり、呼び出し元として覚える。
+   ★ ここでは合言葉を使わない（使うのは登録のときの1回だけ）。 */
 window.addEventListener('message', function (e) {
   var d = e.data;
   if (!d || d.wb !== 'cal-hello') return;
-  if (oya) return;                       /* いちど決まったら変えない */
-  if (shirabechu) return;
+  if (oya) return;
   if (!katachiOk(e.origin)) return;
   var a = String(d.nonce || '');
-  if (a.length < 32) return;             /* 合言葉が無ければ、何も返さない */
-
-  shirabechu = true;
-  var moto = e.origin;
-  fetch(SHIRABE, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ aikotoba: a })
-  })
-  .then(function (r) { return r.json(); })
-  .then(function (v) {
-    shirabechu = false;
-    if (!v || v.ok !== true) return;     /* 合わなければ、何も返さない */
-    oya = moto;
-    btn.disabled = false;
-    okuru({ wb: 'cal-ready' });
-  })
-  .catch(function () { shirabechu = false; });
+  if (a.length < 32) return;
+  oya = e.origin;
+  aikotoba = a;
+  btn.disabled = false;
+  okuru({ wb: 'cal-ready' });
 });
 
-function tcYoi(){
-  if (tc) return true;
+function ccYoi(){
+  if (cc) return true;
   if (!(window.google && google.accounts && google.accounts.oauth2)) return false;
-  tc = google.accounts.oauth2.initTokenClient({
+  /* ★ 引換券（code）をもらう形。通行証を直にもらう形ではない。
+     こちらなら「ずっと使える控え」を当社のサーバが預かれるので、
+     2回目からは押さずに済む。 */
+  cc = google.accounts.oauth2.initCodeClient({
     client_id: CID,
     scope: SCOPE,
+    ux_mode: 'popup',
+    /* ★ 控えをもらうために要る2つ */
+    access_type: 'offline',
+    prompt: 'consent',
     callback: function (r) {
-      btn.disabled = false;
-      if (r && r.access_token) {
-        kaku('');
-        okuru({ wb: 'cal-token', token: r.access_token,
-                expiresIn: Number(r.expires_in || 3500) });
-      } else {
-        kaku('もう一度お願いします');
-        okuru({ wb: 'cal-error', kind: 'no-token', message: '' });
-      }
+      var code = (r && r.code) || '';
+      if (!code) { btn.disabled = false; kaku('もう一度お願いします'); return; }
+      kaku('登録しています…');
+      fetch(SABA, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ doko: 'touroku', aikotoba: aikotoba, code: code })
+      })
+      .then(function (res) { return res.json(); })
+      .then(function (v) {
+        btn.disabled = false;
+        if (v && v.ok && v.token) {
+          kaku('');
+          okuru({ wb: 'cal-token', token: v.token,
+                  expiresIn: Number(v.expiresIn || 3500) });
+        } else {
+          kaku('登録できませんでした');
+          okuru({ wb: 'cal-error', kind: (v && v.riyuu) || 'touroku', message: '' });
+        }
+      })
+      .catch(function () {
+        btn.disabled = false;
+        kaku('登録できませんでした');
+        okuru({ wb: 'cal-error', kind: 'net', message: '' });
+      });
     },
     error_callback: function (e2) {
       btn.disabled = false;
       var t = (e2 && e2.type) || '?';
       kaku(t === 'popup_closed' ? 'もう一度お願いします' : '取れませんでした');
-      okuru({ wb: 'cal-error', kind: t, message: (e2 && e2.message) || '' });
+      okuru({ wb: 'cal-error', kind: t, message: '' });
     }
   });
   return true;
 }
 
 btn.onclick = function () {
-  if (!oya) return;                      /* 合言葉が通っていなければ、何もしない */
-  if (!tcYoi()) { kaku('少し待ってからもう一度'); return; }
+  if (!oya || !aikotoba) return;
+  if (!ccYoi()) { kaku('少し待ってからもう一度'); return; }
   btn.disabled = true;
   kaku('聞いています…');
-  try { tc.requestAccessToken({ prompt: '' }); }
+  try { cc.requestCode(); }
   catch (x) { btn.disabled = false; kaku('取れませんでした'); }
 };
 
 (function matsu(){
   var n = 0;
   var t = setInterval(function () {
-    if (tcYoi()) { clearInterval(t); }
+    if (ccYoi()) { clearInterval(t); }
     else if (++n > 60) { clearInterval(t); kaku('Google の部品を読み込めません'); }
   }, 150);
 })();
