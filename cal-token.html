@@ -47,10 +47,21 @@ var CID = '797669684444-5ffbdm9ltqblqj0dt1a4d1r5n0fv3bfm.apps.googleusercontent.
 /* 閲覧のみ。書き込みの権限は求めない */
 var SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 
-/* 通行証を渡してよい呼び出し元 */
+/* 通行証を渡してよい呼び出し元。
+
+   ★★ 2026-09-21。ここをいったん「手元での試し」だけに閉じた。
+
+     はじめ *.googleusercontent.com を丸ごと通していた。**これは穴だった。**
+     そのドメインは Apps Script の Web アプリが**全ユーザー共通で使う**ものなので、
+     誰が公開した Apps Script アプリからでも、このページを枠に入れて
+     挨拶を送れば「呼び出し元」として登録できてしまう。
+     そのうえ通行証は同意画面を出さずに発行されるため、
+     利用者がボタンを1回押しただけで、相手に渡ってしまう。
+
+     ドメインだけでは「本物の呼び出し元か」を見分けられない。
+     見分ける仕組みができるまで、ここは閉じておく。 */
 function oyaOk(o){
-  return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o)
-      || /^http:\/\/localhost(:\d+)?$/.test(o);
+  return /^http:\/\/localhost(:\d+)?$/.test(o);
 }
 
 var oya = null, tc = null;
