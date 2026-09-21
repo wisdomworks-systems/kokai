@@ -13,6 +13,9 @@
   ・受け取った通行証は、呼び出し元の画面にだけ渡します
   ・このページは何も保存しません
 
+  ★ 呼び出し元が本物かどうかは、こちらのサーバが出した
+    「1回きりの合言葉」で確かめます。合言葉が無ければボタンは押せません。
+
   お問い合わせ： 株式会社ウィズダムワークス
 -->
 <style>
@@ -36,7 +39,7 @@
 </head>
 <body>
 <div class="naka">
-  <button id="btn">カレンダーを表示</button>
+  <button id="btn" disabled>カレンダーを表示</button>
   <span class="ji" id="ji"></span>
 </div>
 
@@ -46,36 +49,54 @@
 var CID = '797669684444-5ffbdm9ltqblqj0dt1a4d1r5n0fv3bfm.apps.googleusercontent.com';
 /* 閲覧のみ。書き込みの権限は求めない */
 var SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+/* 合言葉が本物かを聞く先 */
+var SHIRABE = 'https://gkioqeaowmhwblumpxob.supabase.co/functions/v1/cal-aikotoba';
 
-/* 通行証を渡してよい呼び出し元。
+/* ★ 呼び出し元の見分けは、合言葉で行う。
 
-   ★★ 2026-09-21。ここをいったん「手元での試し」だけに閉じた。
+   住所（オリジン）だけでは見分けられない。
+   社内システムの画面は *.googleusercontent.com の下にあり、
+   その住所は毎回変わるうえ、同じドメインを世界中の Apps Script が使う。
 
-     はじめ *.googleusercontent.com を丸ごと通していた。**これは穴だった。**
-     そのドメインは Apps Script の Web アプリが**全ユーザー共通で使う**ものなので、
-     誰が公開した Apps Script アプリからでも、このページを枠に入れて
-     挨拶を送れば「呼び出し元」として登録できてしまう。
-     そのうえ通行証は同意画面を出さずに発行されるため、
-     利用者がボタンを1回押しただけで、相手に渡ってしまう。
-
-     ドメインだけでは「本物の呼び出し元か」を見分けられない。
-     見分ける仕組みができるまで、ここは閉じておく。 */
-function oyaOk(o){
-  return /^http:\/\/localhost(:\d+)?$/.test(o);
+   ここは形だけの下調べで、**本体は合言葉のほう**である。 */
+function katachiOk(o){
+  return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o)
+      || /^http:\/\/localhost(:\d+)?$/.test(o);
 }
 
-var oya = null, tc = null;
+var oya = null, tc = null, shirabechu = false;
 var btn = document.getElementById('btn');
 var ji  = document.getElementById('ji');
 
 function okuru(m){ if (oya) { try { parent.postMessage(m, oya); } catch (x) {} } }
 function kaku(s){ ji.textContent = s || ''; }
 
+/* 挨拶。合言葉が本物のときだけ、呼び出し元として覚える */
 window.addEventListener('message', function (e) {
-  if (!e.data || e.data.wb !== 'cal-hello') return;
-  if (!oyaOk(e.origin)) return;
-  oya = e.origin;
-  okuru({ wb: 'cal-ready' });
+  var d = e.data;
+  if (!d || d.wb !== 'cal-hello') return;
+  if (oya) return;                       /* いちど決まったら変えない */
+  if (shirabechu) return;
+  if (!katachiOk(e.origin)) return;
+  var a = String(d.nonce || '');
+  if (a.length < 32) return;             /* 合言葉が無ければ、何も返さない */
+
+  shirabechu = true;
+  var moto = e.origin;
+  fetch(SHIRABE, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ aikotoba: a })
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (v) {
+    shirabechu = false;
+    if (!v || v.ok !== true) return;     /* 合わなければ、何も返さない */
+    oya = moto;
+    btn.disabled = false;
+    okuru({ wb: 'cal-ready' });
+  })
+  .catch(function () { shirabechu = false; });
 });
 
 function tcYoi(){
@@ -106,6 +127,7 @@ function tcYoi(){
 }
 
 btn.onclick = function () {
+  if (!oya) return;                      /* 合言葉が通っていなければ、何もしない */
   if (!tcYoi()) { kaku('少し待ってからもう一度'); return; }
   btn.disabled = true;
   kaku('聞いています…');
