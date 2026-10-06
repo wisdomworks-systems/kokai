@@ -57,6 +57,7 @@ var SABA = 'https://gkioqeaowmhwblumpxob.supabase.co/functions/v1/cal-token';
 /* 呼び出し元の形だけの下調べ。**本体は合言葉のほう。** */
 function katachiOk(o){
   return /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(o)
+      || o === 'https://wisdomworks-systems.github.io'   /* ★ 2026-10-06：新しい画面（/wb/）。これが無いと、新しい画面ではボタンが押せないままだった */
       || /^http:\/\/localhost(:\d+)?$/.test(o);
 }
 
